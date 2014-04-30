@@ -1,7 +1,20 @@
 MQTT-SN-Arduino
 ===============
 
-This is a for of the 
-https://bitbucket.org/MerseyViking/mqtt-sn-arduino
+TODO: I don't like the repo name anymore, change it to something more generic
 
-With some minor bug fixes and example code
+Connecting mesh network to the MQTT broker and tunneling MQTT protocol over Websocket.
+Mesh network is based on the open-source MeshBee modules with Arduino end devices and Raspberry Pi acting as MQTT mesh network gateway.
+TODO: Add links to MQTT, etc
+
+Overall project architecture:
+TODO: Awesome diagrams should be here
+
+There are multiple pieces of the puzzle:
+1. mqttsn folder. This is an MQTT-SN Arduino library, fork of the http://bitbucket.org/MerseyViking/mqtt-sn-arduino with some minor bug fixes (TODO: get in touch with the repo owner to merge). Copy mqttsn folder into your Arduino libraries folder.
+2. MqttsnClient folder is an Arduino test sketch (publishes Arduino temperature to /arduino/temp topic). There is no frame logic, for now assuming direct/transparent serial connection to the broker.
+3. "serial-mqtts" folder. Serial to MQTT-SN/UDP gateway. Dummy simple Python script to read MQTT-SN from serial port and send it as UDP packet.
+4. RSMB Broker. Compiled version and configuration file of the "Really Small Message Broker" from  http://git.eclipse.org/c/mosquitto/org.eclipse.mosquitto.rsmb.git
+5. Websocket to TCP gateway. This is slightly modified "websockify" project from https://github.com/kanaka/websockify to tunnel MQTT over Websocket. Compatible with http://mqtt.io client.
+
+TODO: Wrap serial communication into (custom?) frames. Create new UDP connection for each client. Test! Create PLC MQTT client.
