@@ -114,8 +114,7 @@ void do_proxy(ws_ctx_t *ws_ctx, int target) {
             bytes = send(target, ws_ctx->tout_buf + tout_start, len, 0);
             if (pipe_error) { break; }
             if (bytes < 0) {
-                handler_emsg("target connection error: %s\n",
-                             strerror(errno));
+                handler_emsg("target connection error: %s\n", strerror(errno));
                 break;
             }
             tout_start += bytes;
@@ -129,13 +128,11 @@ void do_proxy(ws_ctx_t *ws_ctx, int target) {
 
         if (FD_ISSET(client, &wlist)) {
             len = cout_end-cout_start;
-	    handler_emsg("Sending to client, len:%u\n",len);
+			handler_emsg("Sending to client, len:%u\n",len);
             bytes = ws_send(ws_ctx, ws_ctx->cout_buf + cout_start, len);
             if (pipe_error) { break; }
             if (len < 3) {
-                handler_emsg("len: %d, bytes: %d: %d\n",
-                             (int) len, (int) bytes,
-                             (int) *(ws_ctx->cout_buf + cout_start));
+                handler_emsg("len: %d, bytes: %d: %d\n",(int) len, (int) bytes,(int) *(ws_ctx->cout_buf + cout_start));
             }
             cout_start += bytes;
             if (cout_start >= cout_end) {
@@ -154,46 +151,39 @@ void do_proxy(ws_ctx_t *ws_ctx, int target) {
                 break;
             }
             cout_start = 0;
-
+#ifdef DEBUG
             printf("before encode: ");
             for (i=0; i< bytes; i++) {
                 printf("%u,", (unsigned char) *(ws_ctx->cin_buf+i));
             }
             printf("\n");
-
-		if (strcasecmp(ws_ctx->headers->protocols, "mqtt") != 0)
-		{
-			// MQTT. Unmask data
-			printf("MQTT protocol, opcode 2\n");
-			cout_end = encode_mask(ws_ctx->cin_buf, bytes, ws_ctx->cout_buf, BUFSIZE, 2);
-		}
-		else
-		{
-	            	if (ws_ctx->hybi) 
+#endif
+			if (strcasecmp(ws_ctx->headers->protocols, "mqtt") != 0)
 			{
-				// HyBi encoding
-                		cout_end = encode_hybi(ws_ctx->cin_buf, bytes, ws_ctx->cout_buf, BUFSIZE, 1);
+				// MQTT protocol. Encode payload (add frame data)
+#ifdef DEBUG			
+				printf("MQTT protocol, set opcode 2 (binary)\n");
+#endif			
+				cout_end = encode_mqtt(ws_ctx->cin_buf, bytes, ws_ctx->cout_buf, BUFSIZE, 2);
 			}
-		
-			if (ws_ctx->hixie)
+			else
 			{
-				// Some sort of hixie encoding
-	        	        cout_end = encode_hixie(ws_ctx->cin_buf, bytes, ws_ctx->cout_buf, BUFSIZE);
-        	    	}
+				handler_emsg("Unsupported protocol: %s\n", ws_ctx->headers->protocols);
+				break;
+			}
+#ifdef DEBUG
+			printf("encoded: ");
+			for (i=0; i< cout_end; i++) {
+				printf("%u,", (unsigned char) *(ws_ctx->cout_buf+i));
+			}
+			printf("\n");
+#endif
+			if (cout_end < 0) {
+				handler_emsg("encoding error\n");
+				break;
+			}
+			traffic("{");
 		}
-
-            printf("encoded: ");
-            for (i=0; i< cout_end; i++) {
-                printf("%u,", (unsigned char) *(ws_ctx->cout_buf+i));
-            }
-            printf("\n");
-
-            if (cout_end < 0) {
-                handler_emsg("encoding error\n");
-                break;
-            }
-            traffic("{");
-        }
 
         if (FD_ISSET(client, &rlist)) {
             bytes = ws_recv(ws_ctx, ws_ctx->tin_buf + tin_end, BUFSIZE-1);
@@ -203,49 +193,36 @@ void do_proxy(ws_ctx_t *ws_ctx, int target) {
                 break;
             }
             tin_end += bytes;
-
+#ifdef DEBUG
             printf("before decode: ");
             for (i=0; i< bytes; i++) {
                 printf("%u,", (unsigned char) *(ws_ctx->tin_buf+i));
             }
             printf("\n");
-		
-		if (strcasecmp(ws_ctx->headers->protocols, "mqtt") != 0)
-		{
-			// MQTT protocol. direct copy
-			printf("Assuming MQTT\n");
-			len  = decode_mask(ws_ctx->tin_buf + tin_start, tin_end-tin_start, ws_ctx->tout_buf, BUFSIZE-1, &opcode, &left);
-		}
-		else
-		{
-		        if (ws_ctx->hybi) 
+#endif		
+			if (strcasecmp(ws_ctx->headers->protocols, "mqtt") != 0)
 			{
-        		        len = decode_hybi(ws_ctx->tin_buf + tin_start,
-                                  tin_end-tin_start,
-                                  ws_ctx->tout_buf, BUFSIZE-1,
-                                  &opcode, &left);
+				// MQTT protocol. Decode/unmask data
+				printf("Assuming MQTT\n");
+				len  = decode_mqtt(ws_ctx->tin_buf + tin_start, tin_end-tin_start, ws_ctx->tout_buf, BUFSIZE-1, &opcode, &left);
 			}
-	
-			if (ws_ctx->hixie)
+			else
 			{
-		                len = decode_hixie(ws_ctx->tin_buf + tin_start,
-                                   tin_end-tin_start,
-                                   ws_ctx->tout_buf, BUFSIZE-1,
-                                   &opcode, &left);
-            		}
-		}
+				handler_emsg("Unsupported protocol: %s\n", ws_ctx->headers->protocols);
+				break;
+			}
 
             if (opcode == 8) {
                 handler_emsg("client sent orderly close frame\n");
                 break;
             }
-
+#ifdef DEBUG
             printf("decoded: ");
             for (i=0; i< len; i++) {
                 printf("%u,", (unsigned char) *(ws_ctx->tout_buf+i));
             }
             printf("\n");
-
+#endif
             if (len < 0) {
                 handler_emsg("decoding error\n");
                 break;
@@ -288,8 +265,7 @@ void proxy_handler(ws_ctx_t *ws_ctx) {
     }
 
     if (connect(tsock, (struct sockaddr *) &taddr, sizeof(taddr)) < 0) {
-        handler_emsg("Could not connect to target: %s\n",
-                     strerror(errno));
+        handler_emsg("Could not connect to target: %s\n", strerror(errno));
         close(tsock);
         return;
     }
@@ -404,13 +380,6 @@ int main(int argc, char *argv[])
     } else if (access(settings.cert, R_OK) != 0) {
         fprintf(stderr, "Warning: '%s' not found\n", settings.cert);
     }
-
-    //printf("  verbose: %d\n",   settings.verbose);
-    //printf("  ssl_only: %d\n",  settings.ssl_only);
-    //printf("  daemon: %d\n",    settings.daemon);
-    //printf("  run_once: %d\n",  settings.run_once);
-    //printf("  cert: %s\n",      settings.cert);
-    //printf("  key: %s\n",       settings.key);
 
     settings.handler = proxy_handler; 
     start_server();

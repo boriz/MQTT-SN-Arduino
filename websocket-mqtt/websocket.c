@@ -209,212 +209,7 @@ int ws_socket_free(ws_ctx_t *ctx) {
 
 /* ------------------------------------------------------- */
 
-
-int encode_hixie(u_char const *src, size_t srclength,
-                 char *target, size_t targsize) {
-    int sz = 0, len = 0;
-    target[sz++] = '\x00';
-    len = b64_ntop(src, srclength, target+sz, targsize-sz);
-    if (len < 0) {
-        return len;
-    }
-    sz += len;
-    target[sz++] = '\xff';
-    return sz;
-}
-
-int decode_hixie(char *src, size_t srclength,
-                 u_char *target, size_t targsize,
-                 unsigned int *opcode, unsigned int *left) {
-    char *start, *end, cntstr[4];
-    int i, len, framecount = 0, retlen = 0;
-    unsigned char chr;
-    if ((src[0] != '\x00') || (src[srclength-1] != '\xff')) {
-        handler_emsg("WebSocket framing error\n");
-        return -1;
-    }
-    *left = srclength;
-
-    if (srclength == 2 &&
-        (src[0] == '\xff') && 
-        (src[1] == '\x00')) {
-        // client sent orderly close frame
-        *opcode = 0x8; // Close frame
-        return 0;
-    }
-    *opcode = 0x1; // Text frame
-
-    start = src+1; // Skip '\x00' start
-    do {
-        /* We may have more than one frame */
-        end = (char *)memchr(start, '\xff', srclength);
-        *end = '\x00';
-        len = b64_pton(start, target+retlen, targsize-retlen);
-        if (len < 0) {
-            return len;
-        }
-        retlen += len;
-        start = end + 2; // Skip '\xff' end and '\x00' start 
-        framecount++;
-    } while (end < (src+srclength-1));
-    if (framecount > 1) {
-        snprintf(cntstr, 3, "%d", framecount);
-        traffic(cntstr);
-    }
-    *left = 0;
-    return retlen;
-}
-
-int encode_hybi(u_char const *src, size_t srclength,
-                char *target, size_t targsize, unsigned int opcode)
-{
-    unsigned long long b64_sz, len_offset = 1, payload_offset = 2, len = 0;
-    
-    if ((int)srclength <= 0)
-    {
-        return 0;
-    }
-
-    b64_sz = ((srclength - 1) / 3) * 4 + 4;
-
-    target[0] = (char)(opcode & 0x0F | 0x80);
-
-    if (b64_sz <= 125) {
-        target[1] = (char) b64_sz;
-        payload_offset = 2;
-    } else if ((b64_sz > 125) && (b64_sz < 65536)) {
-        target[1] = (char) 126;
-        *(u_short*)&(target[2]) = htons(b64_sz);
-        payload_offset = 4;
-    } else {
-        handler_emsg("Sending frames larger than 65535 bytes not supported\n");
-        return -1;
-        //target[1] = (char) 127;
-        //*(u_long*)&(target[2]) = htonl(b64_sz);
-        //payload_offset = 10;
-    }
-
-    len = b64_ntop(src, srclength, target+payload_offset, targsize-payload_offset);
-    
-    if (len < 0) {
-        return len;
-    }
-
-    return len + payload_offset;
-}
-
-int decode_hybi(unsigned char *src, size_t srclength,
-                u_char *target, size_t targsize,
-                unsigned int *opcode, unsigned int *left)
-{
-    unsigned char *frame, *mask, *payload, save_char, cntstr[4];;
-    int masked = 0;
-    int i = 0, len, framecount = 0;
-    size_t remaining;
-    unsigned int target_offset = 0, hdr_length = 0, payload_length = 0;
-    
-    *left = srclength;
-    frame = src;
-
-    //printf("Deocde new frame\n");
-    while (1) {
-        // Need at least two bytes of the header
-        // Find beginning of next frame. First time hdr_length, masked and
-        // payload_length are zero
-        frame += hdr_length + 4*masked + payload_length;
-        //printf("frame[0..3]: 0x%x 0x%x 0x%x 0x%x (tot: %d)\n",
-        //       (unsigned char) frame[0],
-        //       (unsigned char) frame[1],
-        //       (unsigned char) frame[2],
-        //       (unsigned char) frame[3], srclength);
-
-        if (frame > src + srclength) {
-            //printf("Truncated frame from client, need %d more bytes\n", frame - (src + srclength) );
-            break;
-        }
-        remaining = (src + srclength) - frame;
-        if (remaining < 2) {
-            //printf("Truncated frame header from client\n");
-            break;
-        }
-        framecount ++;
-
-        *opcode = frame[0] & 0x0f;
-        masked = (frame[1] & 0x80) >> 7;
-
-        if (*opcode == 0x8) {
-            // client sent orderly close frame
-            break;
-        }
-
-        payload_length = frame[1] & 0x7f;
-        if (payload_length < 126) {
-            hdr_length = 2;
-            //frame += 2 * sizeof(char);
-        } else if (payload_length == 126) {
-            payload_length = (frame[2] << 8) + frame[3];
-            hdr_length = 4;
-        } else {
-            handler_emsg("Receiving frames larger than 65535 bytes not supported\n");
-            return -1;
-        }
-        if ((hdr_length + 4*masked + payload_length) > remaining) {
-            continue;
-        }
-        //printf("    payload_length: %u, raw remaining: %u\n", payload_length, remaining);
-        payload = frame + hdr_length + 4*masked;
-
-        if (*opcode != 1 && *opcode != 2) {
-            handler_msg("Ignoring non-data frame, opcode 0x%x\n", *opcode);
-            continue;
-        }
-
-        if (payload_length == 0) {
-            handler_msg("Ignoring empty frame\n");
-            continue;
-        }
-
-        if ((payload_length > 0) && (!masked)) {
-            handler_emsg("Received unmasked payload from client\n");
-            return -1;
-        }
-
-        // Terminate with a null for base64 decode
-        save_char = payload[payload_length];
-        payload[payload_length] = '\0';
-
-        // unmask the data
-        mask = payload - 4;
-        for (i = 0; i < payload_length; i++) {
-            payload[i] ^= mask[i%4];
-        }
-
-        // base64 decode the data
-        len = b64_pton((const char*)payload, target+target_offset, targsize);
-
-        // Restore the first character of the next frame
-        payload[payload_length] = save_char;
-        if (len < 0) {
-            handler_emsg("Base64 decode error code %d", len);
-            return len;
-        }
-        target_offset += len;
-
-        //printf("    len %d, raw %s\n", len, frame);
-    }
-
-    if (framecount > 1) {
-        snprintf(cntstr, 3, "%d", framecount);
-        traffic(cntstr);
-    }
-    
-    *left = remaining;
-    return target_offset;
-}
-
-
-
-int encode_mask(u_char const *src, size_t srclength, char *target, size_t targsize, unsigned int opcode)
+int encode_mqtt(u_char const *src, size_t srclength, char *target, size_t targsize, unsigned int opcode)
 {
     unsigned long long b64_sz, len_offset = 1, payload_offset = 2, len = 0;
     
@@ -424,8 +219,9 @@ int encode_mask(u_char const *src, size_t srclength, char *target, size_t targsi
     }
 
     b64_sz = srclength;
+#ifdef DEBUG	
     printf("Mask new frame, len=%u\n", b64_sz);
-
+#endif
     target[0] = (char)(opcode & 0x0F | 0x80);
 
     if (b64_sz <= 125) {
@@ -438,25 +234,20 @@ int encode_mask(u_char const *src, size_t srclength, char *target, size_t targsi
     } else {
         handler_emsg("Sending frames larger than 65535 bytes not supported\n");
         return -1;
-        //target[1] = (char) 127;
-        //*(u_long*)&(target[2]) = htonl(b64_sz);
-        //payload_offset = 10;
     }
-
+#ifdef DEBUG	
     printf("frame[0..3]: 0x%x 0x%x 0x%x 0x%x (pay off: %d)\n",
            (unsigned char) target[0],
            (unsigned char) target[1],
            (unsigned char) target[2],
            (unsigned char) target[3], payload_offset);
-
-
+#endif
     memcpy (target+payload_offset, src, srclength);
-
     return srclength + payload_offset;
 }
 
 
-int decode_mask(unsigned char *src, size_t srclength, unsigned char *target, size_t targsize, int *opcode, unsigned int *left)
+int decode_mqtt(unsigned char *src, size_t srclength, unsigned char *target, size_t targsize, int *opcode, unsigned int *left)
 {
     unsigned char *frame, *mask, *payload, save_char, cntstr[4];;
     int masked = 0;
@@ -466,19 +257,21 @@ int decode_mask(unsigned char *src, size_t srclength, unsigned char *target, siz
     
     *left = srclength;
     frame = src;
-
+#ifdef DEBUG	
     printf("Unmask new frame\n");
+#endif
     while (1) {
         // Need at least two bytes of the header
         // Find beginning of next frame. First time hdr_length, masked and
         // payload_length are zero
         frame += hdr_length + 4*masked + payload_length;
+#ifdef DEBUG		
         printf("frame[0..3]: 0x%x 0x%x 0x%x 0x%x (tot: %d)\n",
                (unsigned char) frame[0],
                (unsigned char) frame[1],
                (unsigned char) frame[2],
                (unsigned char) frame[3], srclength);
-
+#endif
         if (frame > src + srclength) {
             printf("Truncated frame from client, need %d more bytes\n", frame - (src + srclength) );
             break;
@@ -512,7 +305,9 @@ int decode_mask(unsigned char *src, size_t srclength, unsigned char *target, siz
         if ((hdr_length + 4*masked + payload_length) > remaining) {
             continue;
         }
+#ifdef DEBUG		
         printf("    payload_length: %u, raw remaining: %u\n", payload_length, remaining);
+#endif		
         payload = frame + hdr_length + 4*masked;
 
         if (*opcode != 1 && *opcode != 2) {
@@ -543,8 +338,9 @@ int decode_mask(unsigned char *src, size_t srclength, unsigned char *target, siz
 	// Copy frame to the output
         memcpy(target+target_offset, payload, payload_length);
         target_offset += payload_length;
-
+#ifdef DEBUG
         printf("    len %d\n", payload_length);
+#endif		
     }
 
     if (framecount > 1) {
@@ -597,13 +393,11 @@ int parse_handshake(ws_ctx_t *ws_ctx, char *handshake) {
    
     start = strstr(handshake, "\r\nSec-WebSocket-Version: ");
     if (start) {
-        // HyBi/RFC 6455
+        // RFC 6455
         start += 25;
         end = strstr(start, "\r\n");
         strncpy(headers->version, start, end-start);
         headers->version[end-start] = '\0';
-        ws_ctx->hixie = 0;
-        ws_ctx->hybi = strtol(headers->version, NULL, 10);
         start = strstr(handshake, "\r\nSec-WebSocket-Key: ");
         if (!start) { return 0; }
         start += 21;
@@ -624,71 +418,11 @@ int parse_handshake(ws_ctx_t *ws_ctx, char *handshake) {
         end = strstr(start, "\r\n");
         strncpy(headers->protocols, start, end-start);
         headers->protocols[end-start] = '\0';
-    } else {
-        // Hixie 75 or 76
-        ws_ctx->hybi = 0;
-
-        start = strstr(handshake, "\r\n\r\n");
-        if (!start) { return 0; }
-        start += 4;
-        if (strlen(start) == 8) {
-            ws_ctx->hixie = 76;
-            strncpy(headers->key3, start, 8);
-            headers->key3[8] = '\0';
-
-            start = strstr(handshake, "\r\nSec-WebSocket-Key1: ");
-            if (!start) { return 0; }
-            start += 22;
-            end = strstr(start, "\r\n");
-            strncpy(headers->key1, start, end-start);
-            headers->key1[end-start] = '\0';
-        
-            start = strstr(handshake, "\r\nSec-WebSocket-Key2: ");
-            if (!start) { return 0; }
-            start += 22;
-            end = strstr(start, "\r\n");
-            strncpy(headers->key2, start, end-start);
-            headers->key2[end-start] = '\0';
-        } else {
-            ws_ctx->hixie = 75;
-        }
-
+    } 
+	else 
+	{
+		handler_msg("Protocol is not supported (only RFC6455 is supported)\n");
     }
-
-    return 1;
-}
-
-int parse_hixie76_key(char * key) {
-    unsigned long i, spaces = 0, num = 0;
-    for (i=0; i < strlen(key); i++) {
-        if (key[i] == ' ') {
-            spaces += 1;
-        }
-        if ((key[i] >= 48) && (key[i] <= 57)) {
-            num = num * 10 + (key[i] - 48);
-        }
-    }
-    return num / spaces;
-}
-
-int gen_md5(headers_t *headers, char *target) {
-    unsigned long key1 = parse_hixie76_key(headers->key1);
-    unsigned long key2 = parse_hixie76_key(headers->key2);
-    char *key3 = headers->key3;
-
-    MD5_CTX c;
-    char in[HIXIE_MD5_DIGEST_LENGTH] = {
-        key1 >> 24, key1 >> 16, key1 >> 8, key1,
-        key2 >> 24, key2 >> 16, key2 >> 8, key2,
-        key3[0], key3[1], key3[2], key3[3],
-        key3[4], key3[5], key3[6], key3[7]
-    };
-
-    MD5_Init(&c);
-    MD5_Update(&c, (void *)in, sizeof in);
-    MD5_Final((void *)target, &c);
-
-    target[HIXIE_MD5_DIGEST_LENGTH] = '\0';
 
     return 1;
 }
@@ -700,11 +434,10 @@ static void gen_sha1(headers_t *headers, char *target) {
 
     SHA1_Init(&c);
     SHA1_Update(&c, headers->key1, strlen(headers->key1));
-    SHA1_Update(&c, HYBI_GUID, 36);
+    SHA1_Update(&c, "EpfvMdcoQCUdHswgSBh9", 20);
     SHA1_Final(hash, &c);
 
-    r = b64_ntop(hash, sizeof hash, target, HYBI10_ACCEPTHDRLEN);
-    //assert(r == HYBI10_ACCEPTHDRLEN - 1);
+    r = b64_ntop(hash, sizeof hash, target, 29);
 }
 
 
@@ -778,30 +511,12 @@ ws_ctx_t *do_handshake(int sock) {
 	if (strcasecmp(headers->protocols, "mqtt") != 0)
 	{
 		handler_msg("MQTT protocol detected\n");
-	        gen_sha1(headers, sha1);
-        	sprintf(response, SERVER_HANDSHAKE_HYBI, sha1, headers->protocols);
+	    gen_sha1(headers, sha1);
+        sprintf(response, SERVER_HANDSHAKE, sha1, headers->protocols);
 	}
 	else
 	{
-	
-	    if (ws_ctx->hybi > 0) 
-	    {
-        	handler_msg("using protocol HyBi/IETF 6455 %d\n", ws_ctx->hybi);
-	        gen_sha1(headers, sha1);
-	        sprintf(response, SERVER_HANDSHAKE_HYBI, sha1, "base64");
-	    } else {
-        	if (ws_ctx->hixie == 76) {
-	            handler_msg("using protocol Hixie 76\n");
-        	    gen_md5(headers, trailer);
-	            pre = "Sec-";
-	        } else {
-        	    handler_msg("using protocol Hixie 75\n");
-	            trailer[0] = '\0';
-        	    pre = "";
-	        }
-        	sprintf(response, SERVER_HANDSHAKE_HIXIE, pre, headers->origin, pre, scheme,
-                	headers->host, headers->path, pre, "base64", trailer);
-    	    }
+		handler_msg("Unsupported protocol: %s\n", headers->protocols);
 	}
     
     handler_msg("response: %s\n", response);
@@ -861,7 +576,10 @@ void start_server() {
 
     /* Initialize buffers */
     lsock = socket(AF_INET, SOCK_STREAM, 0);
-    if (lsock < 0) { error("ERROR creating listener socket"); }
+    if (lsock < 0) 
+	{ 
+		error("ERROR creating listener socket"); 
+	}
     bzero((char *) &serv_addr, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_port = htons(settings.listen_port);
@@ -891,8 +609,7 @@ void start_server() {
     // Reep zombies
     signal(SIGCHLD, SIG_IGN);
 
-    printf("Waiting for connections on %s:%d\n",
-            settings.listen_host, settings.listen_port);
+    printf("Waiting for connections on %s:%d\n", settings.listen_host, settings.listen_port);
 
     while (1) {
         clilen = sizeof(cli_addr);

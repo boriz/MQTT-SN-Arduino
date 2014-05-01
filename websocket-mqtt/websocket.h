@@ -3,26 +3,13 @@
 #define BUFSIZE 65536
 #define DBUFSIZE (BUFSIZE * 3) / 4 - 20
 
-#define SERVER_HANDSHAKE_HIXIE "HTTP/1.1 101 Web Socket Protocol Handshake\r\n\
+#define SERVER_HANDSHAKE "HTTP/1.1 101 Web Socket Protocol Handshake\r\n\
 Upgrade: WebSocket\r\n\
 Connection: Upgrade\r\n\
 %sWebSocket-Origin: %s\r\n\
 %sWebSocket-Location: %s://%s%s\r\n\
 %sWebSocket-Protocol: %s\r\n\
 \r\n%s"
-
-#define SERVER_HANDSHAKE_HYBI "HTTP/1.1 101 Switching Protocols\r\n\
-Upgrade: websocket\r\n\
-Connection: Upgrade\r\n\
-Sec-WebSocket-Accept: %s\r\n\
-Sec-WebSocket-Protocol: %s\r\n\
-\r\n"
-
-#define HYBI_GUID "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-
-#define HYBI10_ACCEPTHDRLEN 29
-
-#define HIXIE_MD5_DIGEST_LENGTH 16
 
 #define POLICY_RESPONSE "<cross-domain-policy><allow-access-from domain=\"*\" to-ports=\"*\" /></cross-domain-policy>\n"
 
@@ -42,8 +29,6 @@ typedef struct {
     int        sockfd;
     SSL_CTX   *ssl_ctx;
     SSL       *ssl;
-    int        hixie;
-    int        hybi;
     headers_t *headers;
     char      *cin_buf;
     char      *cout_buf;
