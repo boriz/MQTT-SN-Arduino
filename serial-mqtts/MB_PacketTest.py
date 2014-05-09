@@ -7,7 +7,7 @@ from struct import *
 
 #SerPort = '/dev/ttyAMA0'
 SerPort = 'COM19'
-DEST_ADDR = 0xEAF6
+DEST_ADDR = 0x0000
 
 # From firmware_at_api.h
 API_DATA_LEN = 20
@@ -65,7 +65,7 @@ def CreateTx (data):
 	rep = bytearray()
 	rep.append(pack('>B', API_START_DELIMITER))	# Delimiter
 	rep.append(pack('>B', len(pay)))	# Length of the payload
-	rep.append(pack('>B', API_TX_REQ))	# API ID	
+	rep.append(pack('>B', API_DATA_PACKET))	# API ID	
 	rep = rep + pay
 	cs = sum(pay) & 0xFF	#checksum
 	rep.append(pack('>B', cs))	# Checksum (payload only, sum of all bytes)
