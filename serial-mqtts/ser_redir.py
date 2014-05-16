@@ -5,19 +5,24 @@ import time
 import datetime
 from struct import *
 
-SerPort = '/dev/ttyAMA0'
-#SerPort = 'COM23'
-BrokerHost = "192.168.1.10"
+#SerPort = '/dev/ttyAMA0'
+SerPort = 'COM30'
+#BrokerHost = "192.168.1.10"
+BrokerHost = "mqtt.dmcinfo.com"
 BrokerPort = 1883
 
 API_DATA_LEN = 20
 API_DATA_PACKET = 0x02
+API_START_DELIMITER = 0x7E
 
 #convert string to hex
 def ToHex(s):
 	retHex=""
 	for c in s:
-		retHex = retHex + "%#04x " % ord(c)
+		if type(c) is int:
+			retHex = retHex + "%#04x " % c
+		else:
+			retHex = retHex + "%#04x " % ord(c)
 	return retHex
 	
 #connect to serial SerPort
@@ -78,10 +83,10 @@ def ParseRx (ser_data):
 		# Header
 		i=0
 		delimiter = dat[i]  # Delimeter
-		#print "delimiter" + str(delimiter)
+		#print "delimiter: " + str(delimiter)
 		i += 1
 		pay_len = dat[i]	# Payload length	
-		#print "pay_len" + str(pay_len)
+		#print "pay_len: " + str(pay_len)
 		i += 1
 		api = dat[i] 		# API ID
 		i += 1
@@ -92,17 +97,19 @@ def ParseRx (ser_data):
 		opt = dat[i]	# option
 		i += 1
 		dat_len = dat[i]	# data length
-		#print "dat_len" + str(dat_len)
+		#print "dat_len: " + str(dat_len)
 		i += 1
 		d_start = i
 		d = bytearray()	# Data
 		for s in range (dat_len):
 			d.append(dat[i])
 			i += 1
+			#print "pay: " + str(i) + " = " + str (dat[i])
 			
 		# Grab source address (data start + data length)
 		i = d_start + API_DATA_LEN
 		src = dat[i] * 256 + dat[i+1]
+		#print "src: " + str(src)
 		return (src, d)
 		
 	except:
@@ -149,7 +156,7 @@ while True:
 			data_ser=""			
 			
 			# Valid data?
-			if src and payload:		
+			if src <>None and payload<>None:			
 				# Valid data !
 				print "SER Source addr:" + hex(src) 
 				print "SER Payload:",
@@ -194,10 +201,9 @@ while True:
 				print "UDP input for address:" + "%#04x" % i.src_addr
 				print "UDP payload:" + ToHex(data_udp)		
 				rep = CreateTx(i.src_addr, data_udp)
-				s = ''.join(rep)
-				ser.write(s)
+				ser.write(rep)
 				ser.flush()
-				print "UDP sent to serial:" + ToHex(s)
+				print "UDP sent to serial:" + ToHex(rep)
 				time.sleep(0.05)
 			
 	except KeyboardInterrupt:
