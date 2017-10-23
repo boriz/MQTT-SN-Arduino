@@ -362,7 +362,7 @@ void MQTTSN::disconnect(const uint16_t duration) {
     msg->type = DISCONNECT;
 
     if (duration > 0) {
-        msg->length += sizeof(msg_disconnect);
+        msg->length += sizeof(duration);
         msg->duration = bswap(duration);
     }
 
